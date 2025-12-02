@@ -3,6 +3,7 @@
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
+#include <cstdlib>
 
 using namespace ftxui;
 
@@ -10,6 +11,17 @@ struct AppState {
     FileTree& tree;
     int selected_index = 0;
 };
+
+static void open_path(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    std::string cmd = "start \"\" \"" + path.string() + "\"";
+#elif defined(__APPLE__)
+    std::string cmd = "open \"" + path.string() + "\"";
+#else
+    std::string cmd = "xdg-open \"" + path.string() + "\"";
+#endif
+    std::system(cmd.c_str());
+}
 
 static Element render_tree(const AppState& state, const std::vector<const FileNode*>& visible) {
     Elements lines;
@@ -59,6 +71,9 @@ static bool handle_event(AppState& state, const std::vector<const FileNode*>& vi
         FileNode* node = const_cast<FileNode*>(visible[state.selected_index]);
         if (node->is_directory) {
             node->is_expanded = !node->is_expanded;
+        }
+        else {
+            open_path(node->path);
         }
         return true;
     }
