@@ -47,10 +47,10 @@ bool Disk::ensure_size()
         return true;
     }
 
-    if (current_size > desired_size) {
-        std::cerr << "Disk size is larger than desired size\n";
-        return false;
-    }
+    // if (current_size > desired_size) {
+    //     std::cerr << "Disk size is larger than desired size\n";
+    //     return false;
+    // }
 
     m_file.seekp(0, std::ios::end);
     std::vector<char> zeros(m_block_size, 0);
