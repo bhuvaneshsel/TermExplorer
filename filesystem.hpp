@@ -45,6 +45,8 @@ struct Superblock {
     int root_inode_index{};
 };
 
+constexpr int SUPERBLOCK_MAGIC = 0x1234ABCD;
+
 class FileSystem {
 public:
     FileSystem(Disk& disk, int max_inodes) : m_disk(disk), m_max_inodes{max_inodes} {};
@@ -65,6 +67,8 @@ public:
 
     bool create_directory(const std::string& path);
     std::vector<std::string> search(const std::string& pattern);
+    bool list_directory_entries(const std::string& path, std::vector<DirectoryEntry>& out);
+    bool is_directory_inode(int inode_index);
 private:
     Disk& m_disk;
     Superblock m_superblock{};

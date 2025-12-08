@@ -1,8 +1,31 @@
 #ifndef TUI_H
 #define TUI_H
 
-#include "file_tree.hpp"
+#include "filesystem.hpp"
+#include <ftxui/dom/elements.hpp>
+#include <ftxui/component/event.hpp>
+#include <ftxui/component/screen_interactive.hpp>
 
-void run_tui(FileTree& tree);
+struct FileNode {
+    std::string name;
+    std::string path;
+    bool is_directory{};
+    bool is_expanded{};
+    std::vector<std::unique_ptr<FileNode>> children{};
+};
+
+struct AppState {
+    FileSystem& fs;
+    FileNode root;
+    int selected_index{};
+};
+
+void build_visible_file_tree(FileSystem& fs, FileNode& node, std::vector<FileNode*>& out);
+
+ftxui::Element render_tree(std::shared_ptr<AppState> state);
+
+bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_ptr<AppState> state);
+
+void run_tui(FileSystem& fs);
 
 #endif

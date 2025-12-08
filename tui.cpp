@@ -1,113 +1,148 @@
+#include "disk.hpp"
+#include "tui.hpp"
 
-#include "file_tree.hpp"
+
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
-#include <cstdlib>
 
-using namespace ftxui;
+#include <memory>
+#include <algorithm>
 
-struct AppState {
-    FileTree& tree;
-    int selected_index = 0;
-};
 
-static void open_path(const std::filesystem::path& path) {
-#if defined(_WIN32)
-    std::string cmd = "start \"\" \"" + path.string() + "\"";
-#elif defined(__APPLE__)
-    std::string cmd = "open \"" + path.string() + "\"";
-#else
-    std::string cmd = "xdg-open \"" + path.string() + "\"";
-#endif
-    std::system(cmd.c_str());
+void build_visible_file_tree(FileSystem& fs, FileNode& node, std::vector<FileNode*>& out) {
+    out.push_back(&node);
+
+    if (!node.is_directory || !node.is_expanded) {
+        return;
+    }
+
+    // Only load children once, the first time
+    if (node.children.empty()) {
+        std::vector<DirectoryEntry> entries;
+        if (fs.list_directory_entries(node.path, entries)) {
+            for (auto& e : entries) {
+                auto child = std::make_unique<FileNode>();
+
+                child->name = e.name;
+                if (node.path == "/")
+                    child->path = "/" + child->name;
+                else
+                    child->path = node.path + "/" + child->name;
+
+                int child_inode = e.inode_index;
+                child->is_directory = fs.is_directory_inode(child_inode);
+                child->is_expanded  = false;
+
+                node.children.push_back(std::move(child));
+            }
+        }
+    }
+
+    for (auto& child : node.children) {
+        build_visible_file_tree(fs, *child, out);
+    }
 }
 
-static Element render_tree(const AppState& state, const std::vector<const FileNode*>& visible) {
-    Elements lines;
+ftxui::Element render_tree(std::shared_ptr<AppState> state) {
+    std::vector<FileNode*> visible;
+    build_visible_file_tree(state->fs, state->root, visible);
 
+    ftxui::Elements lines;
     for (int i = 0; i < (int)visible.size(); ++i) {
-        const FileNode* node = visible[i];
+        FileNode* node = visible[i];
 
-        std::string label {};
-        label.append(node->depth() * 4, ' ');
+        // Compute depth from path ("/a/b" -> 2 slashes => depth 1)
+        int depth = 0;
+        if (node->path.size() > 1) {
+            depth = (int)std::count(node->path.begin(), node->path.end(), '/') - 1;
+        }
+
+        std::string label;
+        label.append(depth * 2, ' ');
+
         if (node->is_directory) {
             label += node->is_expanded ? " " : " ";
         } else {
             label += " ";
         }
-        label += node->name();
 
-        Element row = text(label);
-        if (i == state.selected_index) {
-            row = row | inverted;
+        label += node->name;
+
+        ftxui::Element e = ftxui::text(label);
+        if (i == state->selected_index) {
+            e = e | ftxui::inverted;  // highlight selected row
         }
-        lines.push_back(row);
+        lines.push_back(e);
     }
 
-    return vbox(std::move(lines)) | border;
+    return ftxui::vbox(std::move(lines)) | ftxui::border;
 }
 
-static bool handle_event(AppState& state, const std::vector<const FileNode*>& visible, Event event, ScreenInteractive& screen, int visible_nodes_size) {
+bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_ptr<AppState> state) {
+    std::vector<FileNode*> visible;
+    build_visible_file_tree(state->fs, state->root, visible);
 
-    if (event == Event::Character('q')) {
-        screen.Exit();
+    int n = static_cast<int>(visible.size());
+
+    if (n == 0) {
+        return false;
+    }
+
+    if (state->selected_index >= n) {
+        state->selected_index = n - 1;
+    }
+
+    if (e == ftxui::Event::ArrowDown || e == ftxui::Event::Character('j')) {
+        if (state->selected_index + 1 < n) {
+            state->selected_index++;
+        }
         return true;
     }
 
-    if (event == Event::ArrowDown) {
-        if (state.selected_index + 1 < visible_nodes_size)
-            state.selected_index++;
+    if (e == ftxui::Event::ArrowUp || e == ftxui::Event::Character('k')) {
+        if (state->selected_index > 0) {
+            state->selected_index--;
+        }
         return true;
     }
 
-    if (event == Event::ArrowUp) {
-        if (state.selected_index > 0)
-            state.selected_index--;
-        return true;
-    }
+    FileNode* node = visible[state->selected_index];
 
-    if (event == Event::Return) {
-        FileNode* node = const_cast<FileNode*>(visible[state.selected_index]);
+    if (e == ftxui::Event::Return) {
         if (node->is_directory) {
             node->is_expanded = !node->is_expanded;
         }
-        else {
-            open_path(node->path);
-        }
+        return true;
+    }
+
+    if (e == ftxui::Event::Character('q')) {
+        screen.Exit();
         return true;
     }
 
     return false;
 }
 
-void static clamp_selection(AppState& state, int visible_nodes_size) {
-    if (visible_nodes_size == 0) {
-        state.selected_index = 0;
-        return;
-    }
-    if (state.selected_index >= visible_nodes_size) {
-        state.selected_index = visible_nodes_size - 1;
-    }
-}
+void run_tui(FileSystem& fs) {
+    FileNode root{};
+    root.name = "/";
+    root.path = "/";
+    root.is_directory = true;
+    root.is_expanded = true;
+    
+    auto state = std::make_shared<AppState>(AppState{fs, std::move(root), 0});
 
-void run_tui(FileTree& tree) {
-    AppState state{ tree, 0 };
-    auto screen = ScreenInteractive::Fullscreen();
+    auto screen = ftxui::ScreenInteractive::Fullscreen();
 
-    Component renderer = Renderer([&] {
-        std::vector<const FileNode*> visible_nodes = tree.get_visible_nodes();
-        int visible_nodes_size = static_cast<int>(visible_nodes.size());
-        
-        clamp_selection(state, visible_nodes_size);
-        return render_tree(state, visible_nodes);
+    ftxui::Component renderer = ftxui::Renderer([state] {
+        return render_tree(state);
     });
 
-    renderer = CatchEvent(renderer, [&](Event event) {
-        std::vector<const FileNode*> visible_nodes = tree.get_visible_nodes();
-        int visible_nodes_size = static_cast<int>(visible_nodes.size());
-        return handle_event(state, visible_nodes, event, screen, visible_nodes_size);
+    ftxui::Component app = ftxui::CatchEvent(renderer, [&screen, state](ftxui::Event e) {
+            return handle_event(e, screen, state);
     });
 
-    screen.Loop(renderer);
+    screen.Loop(app);
 }
+

@@ -35,7 +35,7 @@ bool FileSystem::initialize_superblock() {
     const int bits_per_block = block_size * 8;
     const int bitmap_blocks  = (total_blocks + bits_per_block - 1) / bits_per_block;
 
-    m_superblock.id = 0;
+    m_superblock.id = SUPERBLOCK_MAGIC;
     m_superblock.total_blocks = total_blocks;
     m_superblock.block_size = block_size;
 
@@ -396,6 +396,7 @@ int FileSystem::resolve_path(const std::string& path) {
     // "/" or "" is root
     int current_inode = m_superblock.root_inode_index;
     if (parts.empty()) {
+        std::cout << "CURRNET INODE IS ROOT\n";
         return current_inode;
     }
 
@@ -832,6 +833,59 @@ std::vector<std::string> FileSystem::search(const std::string& pattern) {
     return results;
 }
 
+bool FileSystem::list_directory_entries(const std::string& path, std::vector<DirectoryEntry>& out) {
+    out.clear();
+
+    int inode_index = resolve_path(path);
+    if (inode_index < 0 || inode_index >= m_max_inodes) {
+        std::cerr << "list_directory_entries: path not found: " << path << "\n";
+        return false;
+    }
+    const Inode& dir_inode = m_inode_table[inode_index];
+    std::cout << "INODE INDEX: " << inode_index;
+    std::cout << "inode type (raw): " << static_cast<int>(dir_inode.type) << "\n";
+    if (dir_inode.type != InodeType::DIRECTORY) {
+        std::cerr << "list_directory_entries: not a directory: " << path << "\n";
+        return false;
+    }
+
+
+    int dir_block = dir_inode.index_block;
+    if (dir_block < 0) {
+        std::cerr << "list_directory_entries: directory has no block\n";
+        return false;
+    }
+
+    const int block_size = m_disk.block_size();
+    std::vector<char> buffer(block_size, 0);
+
+    if (!m_disk.read_block(dir_block, buffer.data())) {
+        std::cerr << "list_directory_entries: failed to read directory block\n";
+        return false;
+    }
+
+    const DirectoryEntry* entries = reinterpret_cast<const DirectoryEntry*>(buffer.data());
+    int max_entries = block_size / static_cast<int>(sizeof(DirectoryEntry));
+
+    for (int i = 0; i < max_entries; ++i) {
+        if (entries[i].inode_index == -1) {
+            continue;
+        }
+        if (entries[i].name[0] == '\0') {
+            continue;
+        }
+        out.push_back(entries[i]);
+    }
+    return true;
+}
+
+bool FileSystem::is_directory_inode(int inode_index) {
+    if (inode_index < 0 || inode_index >= m_max_inodes) {
+        return false;
+    }
+    return m_inode_table[inode_index].type == InodeType::DIRECTORY;
+}
+
 bool FileSystem::mount() {
     if (!m_disk.is_open()) {
         std::cerr << "Cannot mount: disk is not open\n";
@@ -840,6 +894,11 @@ bool FileSystem::mount() {
     
     if (!FileSystem::read_superblock_from_disk()) {
         std::cerr << "Reading superblock from disk failed\n";
+        return false;
+    }
+
+    if (m_superblock.id != SUPERBLOCK_MAGIC) {
+        std::cerr << "mount: invalid superblock magic, need initialize\n";
         return false;
     }
 

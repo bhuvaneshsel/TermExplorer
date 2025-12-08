@@ -13,7 +13,6 @@ FetchContent_MakeAvailable(ftxui)
 add_executable(TermExplorer)
 target_sources(TermExplorer PRIVATE
     main.cpp
-    file_tree.cpp
     tui.cpp
     disk.cpp
     filesystem.cpp

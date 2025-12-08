@@ -1,4 +1,3 @@
-#include "file_tree.hpp"
 #include "tui.hpp"
 #include "disk.hpp"
 #include "filesystem.hpp"
@@ -7,44 +6,50 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
-using namespace ftxui;
-
-std::string generate_test_data() {
-    std::string data;
-    data.reserve(3000);
-
-    for (int i = 0; i < 3000; ++i) {
-        data.push_back('A' + (i % 26));   // ABCDE... repeated
-    }
-
-    return data;
-}
 
 int main() {
-    // FileTree tree{"."};
-    //
-    // FileNode& root = tree.get_root_node();
-    // root.is_expanded = true;
-    //
-    // run_tui(tree);
     Disk disk(1024, 512);
-    disk.open("disk.img");
+    if (!disk.open("disk.img")) {
+        std::cerr << "Failed to open disk image\n";
+        return 1;
+    }
 
     FileSystem fs(disk, 128);
 
-    fs.initialize();
-    fs.mount();
+    // Try to mount; if it fails, initialize then mount again
+    if (!fs.mount()) {
+        std::cout << "No valid filesystem found. Initializing...\n";
 
-    fs.create_directory("/a");
-    fs.create_directory("/a/b");
-    fs.create_file("/a/b/cat.txt");
-    fs.create_file("/a/b/dog.txt");
-    fs.create_file("/a/file_cat.log");
+        if (!fs.initialize()) {
+            std::cerr << "Failed to initialize filesystem\n";
+            return 1;
+        }
 
-    auto results = fs.search("cat");
+        if (!fs.mount()) {
+            std::cerr << "Failed to mount filesystem after initialization\n";
+            return 1;
+        }
 
-    std::cout << "Search results for 'cat':\n";
-    for (const auto& path : results) {
-        std::cout << "  " << path << "\n";
+        // Create some initial content once after fresh format
+        fs.create_directory("/a");
+        fs.create_directory("/a/b");
+        fs.create_directory("/docs");
+        fs.create_file("/a/b/c.txt");
+        fs.create_file("/docs/readme.md");
+        fs.create_file("/root_file.txt");
     }
+
+    // Sanity check
+    std::vector<DirectoryEntry> test_entries;
+    if (fs.list_directory_entries("/", test_entries)) {
+        std::cout << "Root entries:\n";
+        for (auto& e : test_entries) {
+            std::cout << "  - " << e.name << "\n";
+        }
+    }
+
+    run_tui(fs);
+
+    disk.close();
+    return 0;
 }
