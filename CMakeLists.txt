@@ -15,6 +15,8 @@ target_sources(TermExplorer PRIVATE
     main.cpp
     file_tree.cpp
     tui.cpp
+    disk.cpp
+    filesystem.cpp
 )
 
 target_link_libraries(TermExplorer
