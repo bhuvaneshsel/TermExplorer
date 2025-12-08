@@ -18,6 +18,10 @@ struct AppState {
     FileSystem& fs;
     FileNode root;
     int selected_index{};
+
+    bool creating_file {false};
+    std::string new_file_name;
+    ftxui::Component input_box;
 };
 
 void build_visible_file_tree(FileSystem& fs, FileNode& node, std::vector<FileNode*>& out);
@@ -25,6 +29,9 @@ void build_visible_file_tree(FileSystem& fs, FileNode& node, std::vector<FileNod
 ftxui::Element render_tree(std::shared_ptr<AppState> state);
 
 bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_ptr<AppState> state);
+
+ftxui::Element render_input_popup(std::shared_ptr<AppState> state);
+
 
 void run_tui(FileSystem& fs);
 
