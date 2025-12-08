@@ -34,29 +34,30 @@ int main() {
     FileSystem fs(disk, 128);
 
     // Format the filesystem the first time
-    // fs.initialize();
+    fs.initialize();
 
     // Mount it (loads inode table + bitmap)
     fs.mount();
 
     // Create directory and file
-    // fs.create_directory("/big");
-    // fs.create_file("/big/test.txt");
+    fs.create_directory("/big");
+    fs.create_file("/big/test.txt");
+    int fd = fs.open_file("/big/test.txt");
 
     // Generate 3000 bytes of test data
     std::string long_text = generate_test_data();
 
     // Write the file (should allocate ~6 blocks)
-    // if (!fs.write_file("/big/test.txt", long_text)) {
-    //     std::cerr << "write_file failed\n";
-    //     return 1;
-    // }
+    if (!fs.write_file(fd, long_text)) {
+        std::cerr << "write_file failed\n";
+        return 1;
+    }
 
-    // std::cout << "Wrote " << long_text.size() << " bytes to /big/test.txt\n";
+    std::cout << "Wrote " << long_text.size() << " bytes to /big/test.txt\n";
 
     // Now read it back
     std::string out;
-    if (!fs.read_file("/big/test.txt", out)) {
+    if (!fs.read_file(fd, out)) {
         std::cerr << "read_file failed\n";
         return 1;
     }

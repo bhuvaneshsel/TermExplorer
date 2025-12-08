@@ -566,16 +566,20 @@ bool FileSystem::create_file(const std::string& path) {
     return true;
 }
 
-bool FileSystem::write_file(const std::string& path, const std::string& data) {
-    int inode_index = resolve_path(path);
-    if (inode_index < 0) {
-        std::cerr << "write_file: path not found: " << path << "\n";
+bool FileSystem::write_file(int file_index, const std::string& data) {
+    if (file_index < 0 || file_index >= static_cast<int>(m_open_files.size())) {
+        std:: cerr <<"out of bounds file index\n";
+    }
+
+    OpenFileEntry& entry {m_open_files[file_index]};
+    if (!entry.in_use) {
+        std::cerr << "file not open\n";
         return false;
     }
 
-    Inode& inode = m_inode_table[inode_index];
+    Inode& inode = m_inode_table[entry.inode_index];
     if (inode.type != InodeType::FILE) {
-        std::cerr << "write_file: not a regular file: " << path << "\n";
+        std::cerr << "write_file: not a regular file:\n";
         return false;
     }
 
@@ -647,16 +651,20 @@ bool FileSystem::write_file(const std::string& path, const std::string& data) {
     return true;
 }
 
-bool FileSystem::read_file(const std::string& path, std::string& out) {
-    int inode_index = resolve_path(path);
-    if (inode_index < 0) {
-        std::cerr << "read_file: path not found: " << path << "\n";
+bool FileSystem::read_file(int file_index, std::string& out) {
+    if (file_index < 0 || file_index >= static_cast<int>(m_open_files.size())) {
+        std:: cerr <<"out of bounds file index\n";
+    }
+
+    OpenFileEntry& entry {m_open_files[file_index]};
+    if (!entry.in_use) {
+        std::cerr << "file not open\n";
         return false;
     }
 
-    const Inode& inode = m_inode_table[inode_index];
+    const Inode& inode = m_inode_table[entry.inode_index];
     if (inode.type != InodeType::FILE) {
-        std::cerr << "read_file: not a regular file: " << path << "\n";
+        std::cerr << "read_file: not a regular file\n";
         return false;
     }
 
@@ -698,6 +706,55 @@ bool FileSystem::read_file(const std::string& path, std::string& out) {
     return true;
 }
 
+int FileSystem::open_file(const std::string& path) {
+    int inode_index = resolve_path(path);
+    if (inode_index < 0) {
+        std::cerr << "open_file: path not found: " << path << "\n";
+        return -1;
+    } 
+
+    Inode& inode = m_inode_table[inode_index];
+    if (inode.type != InodeType::FILE) {
+        std::cerr << "open: not a regular file: " << path << "\n";
+        return -1;
+    }
+    int file_index = -1;
+    int m_open_files_size = static_cast<int>(m_open_files.size());
+    for (int i = 0; i < m_open_files_size; ++i) {
+        if (!m_open_files[i].in_use) {
+            file_index = i;
+            break;
+        }
+    }
+    if (file_index == -1) {
+        file_index = m_open_files_size;
+        m_open_files.push_back(OpenFileEntry{});
+    }
+
+    OpenFileEntry& entry = m_open_files[file_index];
+    entry.inode_index = inode_index;
+    entry.offset = 0;
+    entry.in_use = true;
+
+    return file_index;
+}
+
+bool FileSystem::close_file(int file_index) {
+    if (file_index < 0 || file_index >= static_cast<int>(m_open_files.size())) {
+        std::cerr << "close: invalid fd\n";
+        return false;
+    }
+    OpenFileEntry& entry = m_open_files[file_index];
+    if (!entry.in_use) {
+        std::cerr << "close: fd not in use\n";
+        return false;
+    }
+
+    entry.in_use = false;
+    entry.inode_index = -1;
+    entry.offset = 0;
+    return true;
+}
 
 bool FileSystem::mount() {
     if (!m_disk.is_open()) {

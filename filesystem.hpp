@@ -20,8 +20,14 @@ struct Inode {
 };
 
 struct DirectoryEntry {
-    int inode_index{};
+    int inode_index{-1};
     char name[56];
+};
+
+struct OpenFileEntry {
+    bool in_use{false};
+    int inode_index{-1};
+    int offset{};
 };
 
 struct Superblock {
@@ -48,8 +54,10 @@ public:
     bool mount();
 
     bool create_file(const std::string& name);
-    bool write_file(const std::string& path, const std::string& data);
-    bool read_file(const std::string& path, std::string& out);
+    bool write_file(int file_index, const std::string& data);
+    bool read_file(int file_index, std::string& out);
+    int open_file(const std::string& path);
+    bool close_file(int file_index);
 
     const Superblock& superblock() const { return m_superblock; };
     int max_inodes() const { return m_max_inodes; };
@@ -61,6 +69,7 @@ private:
     Superblock m_superblock{};
     std::vector<Inode> m_inode_table{};
     std::vector<uint8_t> m_free_bitmap{};
+    std::vector<OpenFileEntry> m_open_files{};
 
     const int m_max_inodes{};
     bool initialize_superblock();
