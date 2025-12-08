@@ -64,6 +64,7 @@ public:
     const std::vector<Inode>& inode_table() const { return m_inode_table; };
 
     bool create_directory(const std::string& path);
+    std::vector<std::string> search(const std::string& pattern);
 private:
     Disk& m_disk;
     Superblock m_superblock{};
@@ -90,6 +91,8 @@ private:
     
     bool add_directory_entry(int directory_inode_index, int inode_index, const std::string& name);
     int find_directory_entry(int directory_inode_index, const std::string& name);
+
+    void recursive_search(int dir_inode_index,const std::string& dir_path, const std::string& pattern, std::vector<std::string>& results);
 
     int resolve_path(const std::string& path);
     std::vector<std::string> split_path(const std::string& path);

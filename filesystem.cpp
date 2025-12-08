@@ -756,6 +756,82 @@ bool FileSystem::close_file(int file_index) {
     return true;
 }
 
+void FileSystem::recursive_search(int directory_inode_index, const std::string& dir_path, const std::string& pattern, std::vector<std::string>& results) {
+    if (directory_inode_index < 0 || directory_inode_index >= m_max_inodes) {
+        return;
+    } 
+
+    const Inode& dir_inode = m_inode_table[directory_inode_index];
+    if (dir_inode.type != InodeType::DIRECTORY) {
+        return;
+    } 
+
+    int dir_block = dir_inode.index_block;
+    if (dir_block < 0) {
+        return;
+    }
+
+    const int block_size = m_disk.block_size();
+    std::vector<char> buffer(block_size, 0);
+
+    if (!m_disk.read_block(dir_block, buffer.data())) {
+        std::cerr << "search: failed to read directory block at " << dir_block << "\n";
+        return;
+    }
+    
+    const DirectoryEntry* entries = reinterpret_cast<const DirectoryEntry*>(buffer.data());
+    int max_entries = block_size / static_cast<int>(sizeof(DirectoryEntry));
+    for (int i = 0; i < max_entries; ++i) {
+        const DirectoryEntry& e = entries[i];
+
+        if (e.inode_index == -1) {
+            continue; // unused slot
+        }
+
+        // Build std::string from fixed-size char array
+        std::string name {e.name};
+        if (name.empty()) {
+            continue;
+        }
+
+        int child_inode_index = e.inode_index;
+        if (child_inode_index < 0 || child_inode_index >= m_max_inodes) {
+            continue;
+        }
+
+        const Inode& child_inode = m_inode_table[child_inode_index];
+
+        // Build full path: handle root specially to avoid "//"
+        std::string child_path;
+        if (dir_path == "/") {
+            child_path = "/" + name;
+        } else {
+            child_path = dir_path + "/" + name;
+        }
+
+        if (name.find(pattern) != std::string::npos) {
+            results.push_back(child_path);
+        }
+
+        if (child_inode.type == InodeType::DIRECTORY) {
+            recursive_search(child_inode_index, child_path, pattern, results);
+        }
+    }
+}
+
+std::vector<std::string> FileSystem::search(const std::string& pattern) {
+    std::vector<std::string> results;
+
+    int root_inode = m_superblock.root_inode_index;
+    if (root_inode < 0 || root_inode >= m_max_inodes) {
+        std::cerr << "search: invalid root inode index\n";
+        return results;
+    }
+
+    recursive_search(root_inode, "/", pattern, results);
+    return results;
+}
+
 bool FileSystem::mount() {
     if (!m_disk.is_open()) {
         std::cerr << "Cannot mount: disk is not open\n";
