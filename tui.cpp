@@ -73,6 +73,57 @@ bool create_file_at_selection(std::shared_ptr<AppState> state) {
     return true;
 }
 
+bool create_directory_at_selection(std::shared_ptr<AppState> state) {
+    if (state->new_file_name.empty())
+        return false;
+
+    std::vector<FileNode*> visible;
+    build_visible_file_tree(state->fs, state->root, visible);
+    if (visible.empty())
+        return false;
+
+    if (state->selected_index >= static_cast<int>(visible.size())) {
+        state->selected_index = static_cast<int>(visible.size() - 1);
+    }
+
+    FileNode* selected = visible[state->selected_index];
+
+    // Determine the directory in which to create the new directory
+    FileNode* dir_node = nullptr;
+    std::string dir_path;
+
+    if (selected->is_directory) {
+        dir_node = selected;
+        dir_path = selected->path;
+    } else {
+        std::string path = selected->path;
+        auto pos = path.find_last_of('/');
+        if (pos == std::string::npos || pos == 0) {
+            dir_path = "/";
+        } else {
+            dir_path = path.substr(0, pos);
+        }
+        dir_node = find_node_by_path(state->root, dir_path);
+    }
+
+    if (!dir_node)
+        return false;
+
+    // Build full directory path
+    std::string full_path;
+    if (dir_path == "/")
+        full_path = "/" + state->new_file_name;
+    else
+        full_path = dir_path + "/" + state->new_file_name;
+
+    if (!state->fs.create_directory(full_path))
+        return false;
+
+    // Invalidate children so this directory gets reloaded next time
+    dir_node->children.clear();
+    return true;
+}
+
 bool start_edit_file(std::shared_ptr<AppState> state, const std::string& path) {
     int fd = state->fs.open_file(path);
     if (fd < 0) {
@@ -178,7 +229,7 @@ ftxui::Element render_tree(std::shared_ptr<AppState> state) {
 
     auto tree = ftxui::vbox(std::move(lines)) | ftxui::border;
     
-    if (state->creating_file) {
+    if (state->creating_file || state->creating_directory) {
         return ftxui::dbox({
             tree,
             render_input_popup(state),
@@ -202,7 +253,7 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
         return false;
     }
 
-    if (state->creating_file) {
+    if (state->creating_file || state->creating_directory) {
         // Cancel popup
         if (e == ftxui::Event::Escape) {
             state->creating_file = false;
@@ -212,12 +263,17 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
 
         // Submit popup
         if (e == ftxui::Event::Return) {
-            create_file_at_selection(state);   
+            if (state->creating_directory) {
+                create_directory_at_selection(state);
+            }
+            else {
+                create_file_at_selection(state);
+            }
             state->creating_file = false;
+            state->creating_directory = false;
             state->new_file_name.clear();
             return true;
         }
-
         return state->input_box->OnEvent(e);
     }
 
@@ -236,6 +292,13 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
 
     if (e == ftxui::Event::Character('n')) {
         state->creating_file = true;
+        state->new_file_name.clear();
+        return true;
+    }
+
+    if (e == ftxui::Event::Character('d')) {
+        state->creating_directory = true;
+        state->creating_file = false;
         state->new_file_name.clear();
         return true;
     }
@@ -275,9 +338,9 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
 }
 
 ftxui::Element render_input_popup(std::shared_ptr<AppState> state) {
-
+    std::string title = state->creating_directory ? " Enter directory name " : " Enter file name ";
     return ftxui::window(
-        ftxui::text(" Enter file name ") | ftxui::bold,
+        ftxui::text(title) | ftxui::bold,
         ftxui::vbox({
         state->input_box->Render() | ftxui::inverted | ftxui::border,
             ftxui::text("Press Enter to confirm, Esc to cancel") | ftxui::dim,

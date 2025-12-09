@@ -20,6 +20,7 @@ struct AppState {
     int selected_index{};
 
     bool creating_file {false};
+    bool creating_directory {false};
     std::string new_file_name;
     ftxui::Component input_box;
 
@@ -48,6 +49,9 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
 ftxui::Element render_input_popup(std::shared_ptr<AppState> state);
 
 ftxui::Element render_edit_popup(std::shared_ptr<AppState> state);
+
+bool create_directory_at_selection(std::shared_ptr<AppState> state);
+
 
 void run_tui(FileSystem& fs);
 
