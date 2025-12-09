@@ -43,7 +43,8 @@ bool create_file_at_selection(std::shared_ptr<AppState> state) {
     if (selected->is_directory) {
         dir_node = selected;
         dir_path = selected->path;
-    } else {
+    } 
+    else {
         // Parent directory of selected file
         std::string path = selected->path;
         auto pos = path.find_last_of('/');
@@ -191,11 +192,23 @@ void build_visible_file_tree(FileSystem& fs, FileNode& node, std::vector<FileNod
     }
 }
 
-ftxui::Element render_tree(std::shared_ptr<AppState> state) { 
+ftxui::Element render_tree(std::shared_ptr<AppState> state) {
+    // EDIT MODE: full-screen editor + status bar
     if (state->editing_file) {
-        return render_edit_popup(state);
+        return ftxui::vbox({
+            render_edit_popup(state) | ftxui::flex,
+            render_status_bar(state),
+        });
     }
 
+    if (state->searching) {
+        return ftxui::vbox({
+            render_search_panel(state) | ftxui::flex,
+            render_status_bar(state),
+        });
+    }
+
+    // NORMAL + CREATE + SEARCH
     std::vector<FileNode*> visible;
     build_visible_file_tree(state->fs, state->root, visible);
 
@@ -203,7 +216,6 @@ ftxui::Element render_tree(std::shared_ptr<AppState> state) {
     for (int i = 0; i < (int)visible.size(); ++i) {
         FileNode* node = visible[i];
 
-        // Compute depth from path ("/a/b" -> 2 slashes => depth 1)
         int depth = 0;
         if (node->path.size() > 1) {
             depth = (int)std::count(node->path.begin(), node->path.end(), '/') - 1;
@@ -222,20 +234,26 @@ ftxui::Element render_tree(std::shared_ptr<AppState> state) {
 
         ftxui::Element e = ftxui::text(label);
         if (i == state->selected_index) {
-            e = e | ftxui::inverted;  // highlight selected row
+            e = e | ftxui::inverted;
         }
         lines.push_back(e);
     }
 
-    auto tree = ftxui::vbox(std::move(lines)) | ftxui::border;
-    
+    ftxui::Element tree = vbox(std::move(lines)) | ftxui::border;
+
+    ftxui::Element main_view = tree;
+
     if (state->creating_file || state->creating_directory) {
-        return ftxui::dbox({
+        main_view = ftxui::dbox({
             tree,
             render_input_popup(state),
         });
     }
-    return tree;
+
+    return ftxui::vbox({
+        main_view | ftxui::flex,
+        render_status_bar(state),
+    });
 }
 
 bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_ptr<AppState> state) {
@@ -257,6 +275,7 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
         // Cancel popup
         if (e == ftxui::Event::Escape) {
             state->creating_file = false;
+            state->creating_directory = false;   
             state->new_file_name.clear();
             return true;
         }
@@ -275,6 +294,62 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
             return true;
         }
         return state->input_box->OnEvent(e);
+    }
+
+    if (state->searching) {
+        // Cancel search
+        if (e == ftxui::Event::Escape) {
+            state->searching = false;
+            state->search_query.clear();
+            state->search_results.clear();
+            state->search_selected_index = 0;
+            return true;
+        }
+
+        // If we already have results, arrow/j/k navigates the list
+        if (!state->search_results.empty()) {
+            int n = (int)state->search_results.size();
+
+            if (e == ftxui::Event::ArrowDown || e == ftxui::Event::Character('j')) {
+                if (state->search_selected_index + 1 < n)
+                    state->search_selected_index++;
+                return true;
+            }
+
+            if (e == ftxui::Event::ArrowUp || e == ftxui::Event::Character('k')) {
+                if (state->search_selected_index > 0)
+                    state->search_selected_index--;
+                return true;
+            }
+
+            if (e == ftxui::Event::Return) {
+                std::string path = state->search_results[state->search_selected_index];
+                state->searching = false;
+                state->search_query.clear();
+                state->search_results.clear();
+                state->search_selected_index = 0;
+
+                // Try to open as file
+                start_edit_file(state, path);
+                return true;
+            }
+
+            // Let the search_box still handle typing (in case user edits query)
+            if (state->search_box->OnEvent(e))
+                return true;
+            return false;
+        }
+
+        // No results yet: typing query + Enter to run search
+        if (e == ftxui::Event::Return) {
+            perform_search(state);
+            return true;
+        }
+
+        if (state->search_box->OnEvent(e))
+            return true;
+
+        return false;
     }
 
     std::vector<FileNode*> visible;
@@ -300,6 +375,14 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
         state->creating_directory = true;
         state->creating_file = false;
         state->new_file_name.clear();
+        return true;
+    }
+
+    if (e == ftxui::Event::Character('/')) {
+        state->searching = true;
+        state->search_query.clear();
+        state->search_results.clear();
+        state->search_selected_index = 0;
         return true;
     }
 
@@ -354,10 +437,80 @@ ftxui::Element render_edit_popup(std::shared_ptr<AppState> state) {
     return ftxui::vbox({
         ftxui::text(" Editing: " + state->edit_path) | ftxui::bold | ftxui::center | ftxui::border,
         state->edit_box->Render() | ftxui::flex | ftxui::inverted | ftxui::border,
-
-        ftxui::text("Press Esc to save & close") | ftxui::dim | ftxui::center | ftxui::border,
     });
 }
+
+void perform_search(std::shared_ptr<AppState> state) {
+    state->search_results = state->fs.search(state->search_query);
+    state->search_selected_index = 0;
+}
+
+ftxui::Element render_search_panel(std::shared_ptr<AppState> state) {
+    ftxui::Elements body;
+
+    // Search input
+    body.push_back(
+        ftxui::hbox({
+            ftxui::text(" Pattern: ") | ftxui::dim,
+            state->search_box->Render() | ftxui::border | ftxui::flex,
+        })
+    );
+
+    body.push_back(ftxui::separator());
+
+    // Always show the results region, even if empty
+    {
+        ftxui::Elements lines;
+
+        if (state->search_results.empty()) {
+            lines.push_back(ftxui::text(" (No results yet) ") | ftxui::dim);
+        } else {
+            for (int i = 0; i < (int)state->search_results.size(); ++i) {
+                auto row = ftxui::text(state->search_results[i]);
+                if (i == state->search_selected_index)
+                    row = row | ftxui::inverted;
+                lines.push_back(row);
+            }
+        }
+
+        body.push_back(
+            vbox(std::move(lines)) |
+            ftxui::border |
+            ftxui::flex
+        );
+    }
+
+    return window(
+               ftxui::text(" Search ") | ftxui::bold,
+               vbox(std::move(body)) | ftxui::flex
+           ) | ftxui::flex;
+}
+
+ftxui::Element render_status_bar(std::shared_ptr<AppState> state) {
+    std::string msg;
+
+    if (state->editing_file) {
+        msg = "[Esc] Save & close";
+    } else if (state->creating_file || state->creating_directory) {
+        msg = "[Enter] Confirm  |  [Esc] Cancel";
+    } else if (state->searching) {
+        if (state->search_results.empty()) {
+            msg = "Search: type pattern  |  [Enter] Search  |  [Esc] Cancel";
+        } else {
+            msg = "Search results: [Enter] Open  |  [j/k or ↑/↓] Move  |  [Esc] Close";
+        }
+    } else {
+        msg =
+            "[j/k or ↑/↓] Move  |  [Enter] Open/Toggle  |  [n] New file  |  [d] New dir  |  [/] Search  |  [q] Quit";
+    }
+
+    return ftxui::hbox({
+               ftxui::text(msg) | ftxui::dim | ftxui::center,
+           }) |
+           ftxui::border;
+}
+
+
 
 void run_tui(FileSystem& fs) {
     FileNode root{};
@@ -370,6 +523,7 @@ void run_tui(FileSystem& fs) {
 
     state->input_box = ftxui::Input(&state->new_file_name, "");
     state->edit_box  = ftxui::Input(&state->edit_content, "");
+    state->search_box = ftxui::Input(&state->search_query, "");  
 
     auto screen = ftxui::ScreenInteractive::Fullscreen();
 

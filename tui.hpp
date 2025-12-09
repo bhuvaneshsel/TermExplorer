@@ -28,6 +28,12 @@ struct AppState {
     std::string edit_content;
     std::string edit_path;
     ftxui::Component edit_box;
+
+    bool searching{false};
+    std::string search_query;
+    std::vector<std::string> search_results;
+    int search_selected_index{0};
+    ftxui::Component search_box;
 };
 
 
@@ -52,6 +58,11 @@ ftxui::Element render_edit_popup(std::shared_ptr<AppState> state);
 
 bool create_directory_at_selection(std::shared_ptr<AppState> state);
 
+void perform_search(std::shared_ptr<AppState> state);
+
+ftxui::Element render_search_panel(std::shared_ptr<AppState> state);
+
+ftxui::Element render_status_bar(std::shared_ptr<AppState> state);
 
 void run_tui(FileSystem& fs);
 
