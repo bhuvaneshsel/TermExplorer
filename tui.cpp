@@ -9,7 +9,7 @@
 #include <memory>
 #include <algorithm>
 
-static FileNode* find_node_by_path(FileNode& node, const std::string& path) {
+FileNode* find_node_by_path(FileNode& node, const std::string& path) {
     if (node.path == path)
         return &node;
 
@@ -21,7 +21,7 @@ static FileNode* find_node_by_path(FileNode& node, const std::string& path) {
     return nullptr;
 }
 
-static bool create_file_at_selection(std::shared_ptr<AppState> state) {
+bool create_file_at_selection(std::shared_ptr<AppState> state) {
     if (state->new_file_name.empty())
         return false;
 
@@ -73,6 +73,39 @@ static bool create_file_at_selection(std::shared_ptr<AppState> state) {
     return true;
 }
 
+bool start_edit_file(std::shared_ptr<AppState> state, const std::string& path) {
+    int fd = state->fs.open_file(path);
+    if (fd < 0) {
+        return false;
+    }
+
+    std::string content;
+    if (!state->fs.read_file(fd, content)) {
+        state->fs.close_file(fd);
+        return false;
+    }
+    state->fs.close_file(fd);
+
+    state->edit_path    = path;
+    state->edit_content = std::move(content);
+    state->editing_file = true;
+
+    return true;
+}
+
+bool save_edited_file(std::shared_ptr<AppState> state) {
+    if (!state->editing_file || state->edit_path.empty())
+        return false;
+
+    int fd = state->fs.open_file(state->edit_path);
+    if (fd < 0)
+        return false;
+
+    bool ok = state->fs.write_file(fd, state->edit_content);
+    state->fs.close_file(fd);
+    return ok;
+}
+
 void build_visible_file_tree(FileSystem& fs, FileNode& node, std::vector<FileNode*>& out) {
     out.push_back(&node);
 
@@ -107,7 +140,11 @@ void build_visible_file_tree(FileSystem& fs, FileNode& node, std::vector<FileNod
     }
 }
 
-ftxui::Element render_tree(std::shared_ptr<AppState> state) {
+ftxui::Element render_tree(std::shared_ptr<AppState> state) { 
+    if (state->editing_file) {
+        return render_edit_popup(state);
+    }
+
     std::vector<FileNode*> visible;
     build_visible_file_tree(state->fs, state->root, visible);
 
@@ -141,18 +178,29 @@ ftxui::Element render_tree(std::shared_ptr<AppState> state) {
 
     auto tree = ftxui::vbox(std::move(lines)) | ftxui::border;
     
-    if (!state->creating_file) {
-        return tree;
+    if (state->creating_file) {
+        return ftxui::dbox({
+            tree,
+            render_input_popup(state),
+        });
     }
-
-    // Overlay popup on top of tree
-    return ftxui::dbox({
-        tree,
-        render_input_popup(state),
-    });
+    return tree;
 }
 
 bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_ptr<AppState> state) {
+
+    if (state->editing_file) {
+        if (e == ftxui::Event::Escape) {
+            save_edited_file(state);
+            state->editing_file = false;
+            state->edit_path.clear();
+            return true;
+        }
+
+        if (state->edit_box->OnEvent(e))
+            return true;
+        return false;
+    }
 
     if (state->creating_file) {
         // Cancel popup
@@ -212,6 +260,9 @@ bool handle_event(ftxui::Event e, ftxui::ScreenInteractive& screen, std::shared_
         if (node->is_directory) {
             node->is_expanded = !node->is_expanded;
         }
+        else {
+            start_edit_file(state, node->path);
+        }
         return true;
     }
 
@@ -228,11 +279,21 @@ ftxui::Element render_input_popup(std::shared_ptr<AppState> state) {
     return ftxui::window(
         ftxui::text(" Enter file name ") | ftxui::bold,
         ftxui::vbox({
-            state->input_box->Render() | ftxui::border,
+        state->input_box->Render() | ftxui::inverted | ftxui::border,
             ftxui::text("Press Enter to confirm, Esc to cancel") | ftxui::dim,
         })
     ) | ftxui::size(ftxui::WIDTH, ftxui::LESS_THAN, 40)
       | ftxui::center;
+}
+
+ftxui::Element render_edit_popup(std::shared_ptr<AppState> state) {
+
+    return ftxui::vbox({
+        ftxui::text(" Editing: " + state->edit_path) | ftxui::bold | ftxui::center | ftxui::border,
+        state->edit_box->Render() | ftxui::flex | ftxui::inverted | ftxui::border,
+
+        ftxui::text("Press Esc to save & close") | ftxui::dim | ftxui::center | ftxui::border,
+    });
 }
 
 void run_tui(FileSystem& fs) {
@@ -243,7 +304,9 @@ void run_tui(FileSystem& fs) {
     root.is_expanded = true;
     
     auto state = std::make_shared<AppState>(AppState{fs, std::move(root), 0});
-    state->input_box = ftxui::Input(&state->new_file_name, "filename");
+
+    state->input_box = ftxui::Input(&state->new_file_name, "");
+    state->edit_box  = ftxui::Input(&state->edit_content, "");
 
     auto screen = ftxui::ScreenInteractive::Fullscreen();
 
